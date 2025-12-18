@@ -1,45 +1,67 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-import twstock  # 引入 twstock 用來查中文名
+import twstock
 
-# --- 設定網頁 ---
-st.set_page_config(page_title="超級選股漏斗", layout="wide")
-st.title("🌪️ 兩階段選股：價格快篩 -> 技術精選 (含名稱)")
+# --- 1. 網頁基本設定 ---
+st.set_page_config(page_title="台股全方位掃描器", layout="wide")
+st.title("🌪️ 台股全方位掃描器：價格快篩 -> 技術精選")
+st.markdown("---")
 
-# --- 側邊欄：設定條件 ---
-st.sidebar.header("1. 選擇族群")
-default_list = "2330, 2317, 2454, 2308, 2303, 2881, 2412, 2382, 3008, 2882, 2886, 2891, 1216, 2002, 2884, 2207, 1101, 2892, 5880, 5871, 2357, 2885, 3231, 2345, 3045, 2912, 4904, 2880, 2883, 2887, 2603, 3034, 3711, 2379, 3037, 2327, 2408, 2395, 2609, 2615, 4938, 1590, 5876, 2801, 6669, 6505, 3017, 2301, 1605, 9910, 3481, 2409, 6116, 2481, 2356, 2353"
-user_tickers = st.sidebar.text_area("觀察名單 (逗號隔開)", default_list, height=150)
+# --- 2. 側邊欄：設定篩選條件 ---
+st.sidebar.header("🎯 第一步：選擇掃描範圍")
 
-st.sidebar.header("2. 第一層：價格篩選")
-min_price = st.sidebar.number_input("最低價 (元)", value=50)
-max_price = st.sidebar.number_input("最高價 (元)", value=150)
+# 模式切換：熱門股 vs 全台股
+list_mode = st.sidebar.radio(
+    "請選擇名單來源：",
+    ("🚀 熱門股 (速度快, 測試用)", "🐢 全台上市股票 (約980檔, 需時較久)")
+)
 
-st.sidebar.header("3. 第二層：技術指標")
-use_kd = st.sidebar.checkbox("KD 黃金交叉", value=True)
-use_vol = st.sidebar.checkbox("爆量 (成交量增幅)", value=True)
-vol_pct = st.sidebar.slider("增幅 %", 10, 100, 20) / 100
+if list_mode == "🚀 熱門股 (速度快, 測試用)":
+    # 預設熱門股清單 (包含電子、傳產、金融、航運)
+    default_list = "2330, 2317, 2454, 2308, 2303, 2881, 2412, 2382, 3008, 2882, 2886, 2891, 1216, 2002, 2884, 2207, 1101, 2892, 5880, 5871, 2357, 2885, 3231, 2345, 3045, 2912, 4904, 2880, 2883, 2887, 2603, 3034, 3711, 2379, 3037, 2327, 2408, 2395, 2609, 2615, 4938, 1590, 5876, 2801, 6669, 6505, 3017, 2301, 1605, 9910, 3481, 2409, 6116, 2481, 2356, 2353"
+    user_tickers = st.sidebar.text_area("觀察名單 (可手動增減)", default_list, height=150)
+else:
+    # 自動抓取 twstock 內的所有上市股票
+    st.sidebar.info("正在載入全台股名單...請稍候")
+    # 過濾條件：type='股票' 且 market='上市'
+    all_listed = [code for code, info in twstock.codes.items() if info.type == '股票' and info.market == '上市']
+    all_listed_str = ", ".join(all_listed)
+    user_tickers = st.sidebar.text_area("已載入全上市名單 (建議勿手動修改)", all_listed_str, height=150)
+    st.sidebar.warning(f"⚠️ 共 {len(all_listed)} 檔。第一階段價格下載約需 1-2 分鐘，請耐心等待。")
 
-# --- 輔助函數：查股票中文名 ---
+st.sidebar.markdown("---")
+st.sidebar.header("💰 第二步：價格過濾 (第一層)")
+min_price = st.sidebar.number_input("最低價 (元)", value=20)
+max_price = st.sidebar.number_input("最高價 (元)", value=100)
+
+st.sidebar.markdown("---")
+st.sidebar.header("📈 第三步：技術指標 (第二層)")
+use_kd = st.sidebar.checkbox("開啟 KD 黃金交叉篩選", value=True)
+use_vol = st.sidebar.checkbox("開啟 爆量篩選", value=True)
+vol_pct = st.sidebar.slider("成交量增幅至少 %", 10, 100, 20) / 100
+
+# --- 3. 核心函數區 ---
+
+# 查股票中文名稱
 def get_stock_name(code):
     try:
-        # twstock.codes 是一個字典，可以直接用代碼查資料
         if code in twstock.codes:
             return twstock.codes[code].name
-        else:
-            return code # 查不到就回傳代碼
+        return code
     except:
         return code
 
-# --- KD 計算函數 ---
+# 計算 KD 值
 def calculate_kd(df):
     try:
+        # 計算 RSV
         low_min = df['Low'].rolling(window=9).min()
         high_max = df['High'].rolling(window=9).max()
         rsv = 100 * (df['Close'] - low_min) / (high_max - low_min)
         rsv = rsv.fillna(50)
         
+        # 計算 K, D
         k_values = [50]
         d_values = [50]
         
@@ -55,117 +77,158 @@ def calculate_kd(df):
     except:
         return df
 
-# --- 主程式 ---
-if st.button("🚀 開始兩階段篩選"):
+# --- 4. 主程式執行邏輯 ---
+if st.button("🚀 開始執行篩選"):
     
-    # 0. 整理代碼清單
+    # --- 步驟 0: 準備清單 ---
     raw_list = [x.strip() for x in user_tickers.split(",") if x.strip()]
-    # 自動補上 .TW 給 yfinance 用
+    # 確保代碼有 .TW (yfinance 需要)
     ticker_list_tw = [f"{x}.TW" if not x.upper().endswith(".TW") else x for x in raw_list]
     
-    st.write(f"### 🏁 階段一：價格快篩 (共 {len(raw_list)} 檔)")
+    st.subheader(f"🏁 階段一：價格快篩 (目標掃描：{len(raw_list)} 檔)")
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
+    # --- 步驟 1: 批次下載價格 (Batch Download) ---
+    status_text.text("正在批次下載最新股價... (全台股模式會停在這裡比較久，是正常的)")
     
     try:
-        # 批次下載最新股價 (只抓 1 天，速度最快)
+        # 一次抓取所有股票的「最新一天」資料
         batch_data = yf.download(ticker_list_tw, period="1d", progress=False)
+        progress_bar.progress(30)
         
-        # 處理 yfinance 回傳格式
+        # 整理 current_prices (處理 Series 或 DataFrame 的差異)
         if len(ticker_list_tw) > 1:
-            current_prices = batch_data['Close'].iloc[-1]
+            # 檢查是否有抓到資料
+            if 'Close' in batch_data:
+                current_prices = batch_data['Close'].iloc[-1]
+            else:
+                st.error("無法取得股價資料，可能是網路問題或代碼錯誤。")
+                st.stop()
         else:
+            # 單檔股票處理
             current_prices = pd.Series({ticker_list_tw[0]: batch_data['Close'].iloc[-1]})
 
-        # 篩選符合價格區間的股票
+        # --- 篩選符合價格區間的股票 ---
         price_qualified_tickers = []
         
         for code_tw in ticker_list_tw:
             try:
-                price = current_prices[code_tw]
-                
-                # 價格判斷
-                if min_price <= price <= max_price:
-                    # 取得純數字代碼 (去掉 .TW) 用來查名字
-                    clean_code = code_tw.replace(".TW", "").replace(".tw", "")
-                    stock_name = get_stock_name(clean_code) # 查中文名
+                # 某些股票可能沒抓到資料(下市或錯誤)，用 try 接住
+                if code_tw in current_prices:
+                    price = current_prices[code_tw]
                     
-                    # 存入清單：(代碼, 名稱, 價格)
-                    price_qualified_tickers.append((clean_code, stock_name, price))
+                    if min_price <= price <= max_price:
+                        # 取得純代碼
+                        clean_code = code_tw.replace(".TW", "").replace(".tw", "")
+                        name = get_stock_name(clean_code)
+                        price_qualified_tickers.append((clean_code, name, price))
             except:
                 continue
-
-        # 顯示第一階段結果
-        st.success(f"✅ 價格符合 ({min_price}~{max_price}元)：共 {len(price_qualified_tickers)} 檔")
         
-        with st.expander("👀 查看通過價格篩選的名單"):
-            # 建立表格顯示
+        progress_bar.progress(50)
+        status_text.text(f"價格篩選完成！剩餘 {len(price_qualified_tickers)} 檔進入第二階段...")
+        
+        # 顯示第一階段結果 (可摺疊)
+        st.success(f"✅ 符合價格區間 ({min_price}~{max_price}元)：共 {len(price_qualified_tickers)} 檔")
+        with st.expander("👀 點擊查看【通過價格篩選】的名單"):
             if price_qualified_tickers:
-                price_df = pd.DataFrame(price_qualified_tickers, columns=["代碼", "名稱", "目前股價"])
-                # 股價格式化小數點
-                price_df["目前股價"] = price_df["目前股價"].map("{:.2f}".format)
-                st.dataframe(price_df, use_container_width=True)
+                p_df = pd.DataFrame(price_qualified_tickers, columns=["代碼", "名稱", "現價"])
+                p_df["現價"] = p_df["現價"].map("{:.2f}".format)
+                st.dataframe(p_df, use_container_width=True)
             else:
                 st.write("無符合資料")
 
     except Exception as e:
-        st.error(f"下載資料時發生錯誤：{e}")
-        price_qualified_tickers = []
+        st.error(f"發生錯誤：{e}")
+        st.stop()
 
-    # --- 階段二：技術指標精選 ---
+    # --- 步驟 2: 技術指標精選 (迴圈處理) ---
     if price_qualified_tickers:
         st.write("---")
-        st.write(f"### 🔬 階段二：技術分析掃描 (針對剩下的 {len(price_qualified_tickers)} 檔)")
+        st.subheader(f"🔬 階段二：技術指標運算 (KD & 成交量)")
         
         final_results = []
-        progress_bar = st.progress(0)
-        total = len(price_qualified_tickers)
+        total_q = len(price_qualified_tickers)
         
-        # 這裡的迴圈會同時拿到 code (代碼) 和 name (名稱)
+        # 建立一個顯示區域
+        scan_status = st.empty()
+        
         for i, (code, name, price) in enumerate(price_qualified_tickers):
-            progress_bar.progress((i + 1) / total)
+            # 更新進度條 (從 50% 開始跑)
+            current_progress = 0.5 + 0.5 * ((i + 1) / total_q)
+            progress_bar.progress(current_progress)
+            scan_status.text(f"正在分析技術面：{code} {name} ... ({i+1}/{total_q})")
             
             try:
-                stock_id = f"{code}.TW"
-                df = yf.download(stock_id, period="3mo", progress=False)
+                # 下載歷史資料 (3個月)
+                df = yf.download(f"{code}.TW", period="3mo", progress=False)
                 
+                # 清理 MultiIndex
                 if isinstance(df.columns, pd.MultiIndex):
                     df.columns = df.columns.droplevel(1)
                 
+                # 資料太少就跳過
                 if df.empty or len(df) < 20: continue
 
+                # 計算 KD
                 df = calculate_kd(df)
                 today = df.iloc[-1]
                 yesterday = df.iloc[-2]
                 
+                # 判定 1: KD 黃金交叉
                 match_kd = True
+                kd_msg = "無"
                 if use_kd:
-                    match_kd = (yesterday['K'] < yesterday['D']) and (today['K'] > today['D'])
-                
+                    # 昨K < 昨D  AND  今K > 今D
+                    is_gc = (yesterday['K'] < yesterday['D']) and (today['K'] > today['D'])
+                    match_kd = is_gc
+                    kd_msg = "✅ 黃金交叉" if is_gc else "❌"
+
+                # 判定 2: 爆量
                 match_vol = True
+                vol_msg = "無"
                 if use_vol:
-                    match_vol = today['Volume'] > (yesterday['Volume'] * (1 + vol_pct))
+                    # 今日量 > 昨日量 * (1 + 增幅)
+                    target_vol = yesterday['Volume'] * (1 + vol_pct)
+                    is_vol_up = today['Volume'] > target_vol
+                    match_vol = is_vol_up
+                    vol_msg = "✅ 爆量" if is_vol_up else "❌"
                 
+                # 綜合判定
                 if match_kd and match_vol:
                     final_results.append({
                         "代碼": code,
-                        "名稱": name,  # 這裡加入名稱
+                        "名稱": name,
                         "收盤價": f"{today['Close']:.2f}",
                         "K值": f"{today['K']:.2f}",
                         "D值": f"{today['D']:.2f}",
                         "成交量": int(today['Volume']),
-                        "訊號": "🌟 入選"
+                        "KD狀態": kd_msg,
+                        "成交量狀態": vol_msg
                     })
                     
-            except:
+            except Exception as e:
                 continue
         
+        # 掃描結束
+        progress_bar.progress(100)
+        scan_status.empty() # 清除文字
+        
         if final_results:
-            st.balloons()
-            st.markdown(f"### 🎉 最終精選：{len(final_results)} 檔")
-            st.dataframe(pd.DataFrame(final_results), use_container_width=True)
+            st.balloons() # 慶祝動畫
+            st.markdown(f"### 🎉 最終篩選結果：共 {len(final_results)} 檔潛力股")
+            
+            # 整理並顯示最終表格
+            res_df = pd.DataFrame(final_results)
+            st.dataframe(res_df, use_container_width=True)
+            
+            st.success("分析完成！請參考上方數據進行決策。")
         else:
-            st.warning("⚠️ 價格過濾後，沒有股票符合技術指標條件。")
+            st.warning("⚠️ 價格符合，但沒有股票符合您的技術指標條件。試著放寬「成交量增幅」或關閉 KD 篩選。")
+
     else:
-        st.warning("⚠️ 沒有股票符合價格區間，無法進行第二階段篩選。")
+        st.warning("第一階段價格篩選後無股票入選，請調整價格區間。")
 
 else:
-    st.info("👈 設定好區間後，按上面的按鈕開始！")
+    st.info("👈 請在左側設定條件，並點擊按鈕開始掃描。")
