@@ -7,7 +7,7 @@ from datetime import datetime
 
 # --- 1. 網頁基本設定 (手機版建議用預設 layout，但這裡維持 wide 讓圖表大一點) ---
 st.set_page_config(page_title="AI 選股、各股分析 V2.0", layout="wide", initial_sidebar_state="collapsed")
-st.title("📱 AI 掌上股市")
+st.title("📱 AI 選股、各股分析 V2.0")
 
 # --- 側邊欄：只放不會常動的設定 ---
 with st.sidebar:
